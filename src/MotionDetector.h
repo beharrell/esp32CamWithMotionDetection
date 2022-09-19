@@ -1,8 +1,11 @@
 #ifndef MOTIONDETECTOR
 #define MOTIONDETECTOR
 #include <Arduino.h>
-#include "Kernels.h"
 #include "esp_camera.h"
+
+#include "Logging.h"
+#include "Kernels.h"
+
 
 class MotionDetector
 {
@@ -29,13 +32,13 @@ private:
 
   void UpdateIgnoreMask()
   {
-    LayeredDilate kernel(3);
+    LayeredDilate kernel(mConfig.mHalfDilationKernelSize);
     mConvolve.Process(&kernel, mErrodedImage, mIgnoreMask);
   }
 
   void ErrodeThreshold()
   {
-    BinaryErrode kernel(2);
+    BinaryErrode kernel(mConfig.mHalfErrodeKernelSize);
     mConvolve.Process(&kernel, mThresholdImage, mErrodedImage);
   }
 
@@ -52,6 +55,17 @@ private:
   }
 
 public:
+  struct Config
+  {
+    int mThreshold{50};
+    int mMovementPixelCount{10};
+    int mIgnorePixelCount{2};
+    int mHalfDilationKernelSize{3};
+    int mHalfErrodeKernelSize{2};
+  };
+
+  Config mConfig;
+ 
   MotionDetector(int maxI, int maxJ) : mTotalPixels{maxI * maxJ}, mConvolve{maxI, maxJ}
   {
     mRgbFrame = reinterpret_cast<uint8_t *>(malloc(mTotalPixels * 3));
@@ -65,7 +79,7 @@ public:
 
     if (!mRgbFrame || !mLastImage || !mIgnoreMask || !mCurrentImage)
     {
-     // LOGD("Failed to alloc frames\n");
+      LOGD("Failed to alloc frames\n");
     }
     Reset();
   }
@@ -111,7 +125,7 @@ public:
       while (currentPixel < currentPixelEnd)
       {
         *diffPixel = abs(static_cast<int>(*(lastPixel++)) - static_cast<int>(*(currentPixel++)));
-        *(thresholdPixel++) = (*(diffPixel++) > 50) ? 255 : 0;
+        *(thresholdPixel++) = (*(diffPixel++) > mConfig.mThreshold) ? 255 : 0;
       }
     }
 
@@ -125,10 +139,10 @@ public:
       auto ignorePixel = mIgnoreMask;
       while (errodedPixel < errodedPixelEnd)
       {
-        if (*(errodedPixel++) != 0 && Count1sInByte(*(ignorePixel++)) < 2)
+        if (*(errodedPixel++) != 0 && Count1sInByte(*(ignorePixel++)) < mConfig.mIgnorePixelCount)
         {
           ++numPixelsIndicatingMovement;
-          foundMovement = numPixelsIndicatingMovement > 10;
+          foundMovement = numPixelsIndicatingMovement > mConfig.mMovementPixelCount;
           if (foundMovement)
           {
             break;

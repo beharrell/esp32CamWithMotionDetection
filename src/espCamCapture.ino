@@ -1,23 +1,16 @@
 #include <Arduino.h>
-#include <WiFi.h>
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
 #include "esp_camera.h"
 #include "FS.h"
 #include "SD_MMC.h"
+
+#define DEBUG
+#include "Logging.h"
+#include "WiFiComms.h"
 #include "MotionDetector.h"
 
 #define CAMERA_MODEL_AI_THINKER
-#include "EloquentVision.h"
-const char *ssid = "Kiwilink2.4GHz";
-const char *password = "kiwi01wifi";
-
-String serverName = "192.168.1.118";          // REPLACE WITH YOUR Raspberry Pi IP ADDRESS
-String serverPath = "/profile-upload-single"; // The default serverPath should be upload.php
-
-const int serverPort = 3000;
-
-WiFiClient client;
 
 // CAMERA_MODEL_AI_THINKER
 #define PWDN_GPIO_NUM 32
@@ -39,25 +32,11 @@ WiFiClient client;
 #define PCLK_GPIO_NUM 22
 
 RTC_DATA_ATTR int imageNum = 0;
-String imageName = "time";
 String imageNameStart = "/im_";
 String uniqueId;
-constexpr uint64_t detectionSleepTimeUs = 1000000;
 
-//#define DEBUG
-#ifdef DEBUG
-constexpr uint64_t monitoringSleepTimeUs = 2000000;
-constexpr int monitor_numberOfFramesSavedBeforeUpload = 5;
-constexpr int detection_numberOfFramesSavedBeforeUpload = 10;
-#define LOGD(format, ...) Serial.printf((format), ##__VA_ARGS__)
-#define LOGE(format, ...) Serial.printf((format), ##__VA_ARGS__)
-#else
-uint64_t monitoringSleepTimeUs = 2000000;
-constexpr int monitor_numberOfFramesSavedBeforeUpload = 5;
-constexpr int detection_numberOfFramesSavedBeforeUpload = 10;
-#define LOGD(format, ...)
-#define LOGE(format...)
-#endif
+
+Config config;
 
 #define FRAMESIZE FRAMESIZE_QQVGA
 #define FRAMESIZE_WIDTH 160
@@ -65,35 +44,7 @@ constexpr int detection_numberOfFramesSavedBeforeUpload = 10;
 static constexpr int mTotalPixels = FRAMESIZE_WIDTH * FRAMESIZE_HEIGHT;
 bool detectedMotion{false};
 MotionDetector *motionDetector;
-
-bool setupWifi()
-{
-  if (!WiFi.mode(WIFI_STA))
-  {
-    LOGE("Setting wifi mode failed\n");
-    return false;
-  }
-  LOGD("Connecting to %s\n", ssid);
-  WiFi.begin(ssid, password);
-  int retryCount{0};
-  while (WiFi.status() != WL_CONNECTED)
-  {
-    delay(500);
-    if (++retryCount > 30)
-    {
-      LOGE("Wifi failed to start\n");
-      return false;
-    }
-  }
-
-  LOGD("ESP32-CAM IP Address: %s", WiFi.localIP().toString().c_str());
-  return true;
-}
-
-void stopWifi()
-{
-  WiFi.disconnect(true);
-}
+WifiComms comms;
 
 void setupCamera()
 {
@@ -125,8 +76,8 @@ void setupCamera()
   if (psramFound())
   {
     config.frame_size = frameSize;
-    config.jpeg_quality = 10; // 0-63 lower number means higher quality
-    config.fb_count = 2;
+    config.jpeg_quality = detectedMotion ? 10 : 5; 
+    config.fb_count = 1;
   }
   else
   {
@@ -207,14 +158,18 @@ void stopSerial()
 
 void setup()
 {
+#ifdef DEBUG
+  config.mMonitoringSleepTimeUs = 2000000;
+  config.mMonitor_numberOfFramesSavedBeforeUpload = 5;
+  config.mDetection_numberOfFramesSavedBeforeUpload = 10;
+#endif
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
 
   setupSerial();
-  setupWifi();
+  comms.setupWifi();
   setupCamera();
   setupSdCard();
   motionDetector = new MotionDetector(FRAMESIZE_WIDTH, FRAMESIZE_HEIGHT);
-
   uint8_t macAddress[6];
   esp_efuse_mac_get_default(macAddress);
   char macAsString[(sizeof(macAddress) * 2) + 1];
@@ -236,93 +191,9 @@ camera_fb_t *CaptureFrame()
   return fb;
 }
 
-bool sendImage(File &imageFile)
-{
-  String getAll;
-  String getBody;
-
-  LOGD("Connecting to server: %s", serverName.c_str());
-  bool connectedOk = client.connect(serverName.c_str(), serverPort);
-  if (connectedOk)
-  {
-    LOGD("Connection successful!");
-    String fileName = imageFile.name();
-    String headStart = "--RandomNerdTutorials\r\nContent-Disposition: form-data; name=\"profile-file\"; filename=\"";
-    String headEnd = "\"\r\nContent-Type: image/jpg\r\n\r\n";
-    String head = headStart + fileName + headEnd;
-    String tail = "\r\n--RandomNerdTutorials--\r\n";
-
-    uint32_t imageLen = imageFile.size();
-    uint32_t extraLen = head.length() + tail.length();
-    uint32_t totalLen = imageLen + extraLen;
-
-    client.println("POST " + serverPath + " HTTP/1.1");
-    client.println("Host: " + serverName);
-    client.println("Content-Length: " + String(totalLen));
-    client.println("Content-Type: multipart/form-data; boundary=RandomNerdTutorials");
-    client.println();
-    client.print(head);
-
-    constexpr size_t bufferSize{1024};
-    char buffer[bufferSize];
-    size_t bytesRead = imageFile.readBytes(buffer, bufferSize);
-    while (bytesRead == bufferSize)
-    {
-      client.write(buffer, bufferSize);
-      bytesRead = imageFile.readBytes(buffer, bufferSize);
-    }
-    client.write(buffer, bytesRead);
-    client.print(tail);
-
-    int timoutTimer = 10000;
-    long startTimer = millis();
-    boolean state = false;
-
-    while ((startTimer + timoutTimer) > millis())
-    {
-      delay(100);
-      while (client.available())
-      {
-        char c = client.read();
-        if (c == '\n')
-        {
-          if (getAll.length() == 0)
-          {
-            state = true;
-          }
-          getAll = "";
-        }
-        else if (c != '\r')
-        {
-          getAll += String(c);
-        }
-        if (state == true)
-        {
-          getBody += String(c);
-        }
-        startTimer = millis();
-      }
-      if (getBody.length() > 0)
-      {
-        break;
-      }
-    }
-    client.stop();
-    LOGD("%s\n", getBody.c_str());
-    imageName = getBody;
-    imageName.trim();
-  }
-  else
-  {
-    getBody = "Connection to " + serverName + " failed.";
-    LOGE("%s\n", getBody.c_str());
-  }
-  return connectedOk;
-}
-
 bool uploadImages()
 {
-  if (!setupWifi())
+  if (!comms.setupWifi())
   {
     return false;
   }
@@ -336,7 +207,7 @@ bool uploadImages()
     bool sendFile = fileToDelete.startsWith(imageNameStart);
     if (sendFile)
     {
-      uploadedOk = sendImage(file);
+      uploadedOk = comms.sendImage(file);
       file.close();
       if (!uploadedOk)
       {
@@ -353,22 +224,24 @@ bool uploadImages()
     file = dir.openNextFile();
   }
   dir.close();
-  stopWifi();
+
+  comms.GetParams(config, motionDetector->mConfig);
+  comms.stopWifi();
   return uploadedOk;
 }
 
-void saveJpgImage(camera_fb_t *frame)
+void saveJpgImage(camera_fb_t *frame, bool detectedImage)
 {
   if (frame->format == PIXFORMAT_JPEG)
   {
-    saveJpgImage(frame->buf, frame->len, "dect");
+    saveJpgImage(frame->buf, frame->len, detectedImage ? "dect" : "current");
   }
 }
 
 void saveJpgImage(const uint8_t *buffer, const int32_t bufferLen, const String type)
 {
   imageNum++;
-  String path = imageNameStart + uniqueId + imageName + String(imageNum) + type + ".jpg";
+  String path = imageNameStart + uniqueId + config.mImageName + String(imageNum) + type + ".jpg";
 
   fs::FS &fs = SD_MMC;
   File file = fs.open(path.c_str(), FILE_WRITE);
@@ -390,7 +263,7 @@ void sleep()
   stopSdCard();
   // stopSerial();
 
-  auto sleepTime = detectedMotion ? detectionSleepTimeUs : monitoringSleepTimeUs;
+  auto sleepTime = detectedMotion ? config.mDetectionSleepTimeUs : config.mMonitoringSleepTimeUs;
   esp_sleep_enable_timer_wakeup(sleepTime);
   esp_light_sleep_start();
 
@@ -412,33 +285,39 @@ void sleep()
 
 void SaveIntermidiateImages()
 {
-      uint8_t *jpgBuffer;
-      size_t jpgBufferLen;
-      fmt2jpg(motionDetector->LastImage(), mTotalPixels, FRAMESIZE_WIDTH, FRAMESIZE_HEIGHT, PIXFORMAT_GRAYSCALE, 48, &jpgBuffer, &jpgBufferLen);
-      saveJpgImage(jpgBuffer, jpgBufferLen, "Last");
-      free(jpgBuffer);
-      fmt2jpg(motionDetector->DiffImage(), mTotalPixels, FRAMESIZE_WIDTH, FRAMESIZE_HEIGHT, PIXFORMAT_GRAYSCALE, 10, &jpgBuffer, &jpgBufferLen);
-      saveJpgImage(jpgBuffer, jpgBufferLen, "Diff");
-      free(jpgBuffer);
-      fmt2jpg(motionDetector->ThresholdImage(), mTotalPixels, FRAMESIZE_WIDTH, FRAMESIZE_HEIGHT, PIXFORMAT_GRAYSCALE, 10, &jpgBuffer, &jpgBufferLen);
-      saveJpgImage(jpgBuffer, jpgBufferLen, "Thresh");
-      free(jpgBuffer);
-      fmt2jpg(motionDetector->ErrodedImage(), mTotalPixels, FRAMESIZE_WIDTH, FRAMESIZE_HEIGHT, PIXFORMAT_GRAYSCALE, 10, &jpgBuffer, &jpgBufferLen);
-      saveJpgImage(jpgBuffer, jpgBufferLen, "Errode");
-      free(jpgBuffer);
-      fmt2jpg(motionDetector->IgnoreMask(), mTotalPixels, FRAMESIZE_WIDTH, FRAMESIZE_HEIGHT, PIXFORMAT_GRAYSCALE, 10, &jpgBuffer, &jpgBufferLen);
-      saveJpgImage(jpgBuffer, jpgBufferLen, "Ignore");
-      free(jpgBuffer);
-    }
+  uint8_t *jpgBuffer;
+  size_t jpgBufferLen;
+  fmt2jpg(motionDetector->LastImage(), mTotalPixels, FRAMESIZE_WIDTH, FRAMESIZE_HEIGHT, PIXFORMAT_GRAYSCALE, 48, &jpgBuffer, &jpgBufferLen);
+  saveJpgImage(jpgBuffer, jpgBufferLen, "Last");
+  free(jpgBuffer);
+  fmt2jpg(motionDetector->DiffImage(), mTotalPixels, FRAMESIZE_WIDTH, FRAMESIZE_HEIGHT, PIXFORMAT_GRAYSCALE, 10, &jpgBuffer, &jpgBufferLen);
+  saveJpgImage(jpgBuffer, jpgBufferLen, "Diff");
+  free(jpgBuffer);
+  fmt2jpg(motionDetector->ThresholdImage(), mTotalPixels, FRAMESIZE_WIDTH, FRAMESIZE_HEIGHT, PIXFORMAT_GRAYSCALE, 10, &jpgBuffer, &jpgBufferLen);
+  saveJpgImage(jpgBuffer, jpgBufferLen, "Thresh");
+  free(jpgBuffer);
+  fmt2jpg(motionDetector->ErrodedImage(), mTotalPixels, FRAMESIZE_WIDTH, FRAMESIZE_HEIGHT, PIXFORMAT_GRAYSCALE, 10, &jpgBuffer, &jpgBufferLen);
+  saveJpgImage(jpgBuffer, jpgBufferLen, "Errode");
+  free(jpgBuffer);
+  fmt2jpg(motionDetector->IgnoreMask(), mTotalPixels, FRAMESIZE_WIDTH, FRAMESIZE_HEIGHT, PIXFORMAT_GRAYSCALE, 10, &jpgBuffer, &jpgBufferLen);
+  saveJpgImage(jpgBuffer, jpgBufferLen, "Ignore");
+  free(jpgBuffer);
+}
 
 void loop()
 {
   camera_fb_t *frame = CaptureFrame();
   if (frame != NULL)
   {
+    auto wasDetected = detectedMotion;
     detectedMotion = detectedMotion || motionDetector->foundMovement(frame);
-    saveJpgImage(frame);
-    const auto numFramesBeforeUpload = detectedMotion ? detection_numberOfFramesSavedBeforeUpload : monitor_numberOfFramesSavedBeforeUpload;
+    if (config.mSaveIntermidiateImages && !wasDetected)
+    {
+      SaveIntermidiateImages();
+    }
+    saveJpgImage(frame, detectedMotion);
+    const auto numFramesBeforeUpload = detectedMotion ? 
+              config.mDetection_numberOfFramesSavedBeforeUpload : config.mMonitor_numberOfFramesSavedBeforeUpload;
     if (imageNum >= numFramesBeforeUpload)
     {
       if (detectedMotion)
