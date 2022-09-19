@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
 #include "esp_camera.h"
@@ -35,7 +36,15 @@ RTC_DATA_ATTR int imageNum = 0;
 String imageNameStart = "/im_";
 String uniqueId;
 
-
+struct Config
+{
+  uint64_t mDetectionSleepTimeUs{1000000};
+  uint64_t mMonitoringSleepTimeUs{2000000};
+  int mMonitor_numberOfFramesSavedBeforeUpload{5};
+  int mDetection_numberOfFramesSavedBeforeUpload{10};
+  bool mSaveIntermidiateImages{true};
+  String mImageName{"time"};
+};
 Config config;
 
 #define FRAMESIZE FRAMESIZE_QQVGA
@@ -76,7 +85,7 @@ void setupCamera()
   if (psramFound())
   {
     config.frame_size = frameSize;
-    config.jpeg_quality = detectedMotion ? 10 : 5; 
+    config.jpeg_quality = detectedMotion ? 10 : 5;
     config.fb_count = 1;
   }
   else
@@ -225,9 +234,86 @@ bool uploadImages()
   }
   dir.close();
 
-  comms.GetParams(config, motionDetector->mConfig);
+  UpdateParams();
   comms.stopWifi();
   return uploadedOk;
+}
+
+void UpdateParams()
+{
+  String params = comms.GetParams();
+  auto &motionConfig = motionDetector->mConfig;
+  DynamicJsonDocument doc(1024);
+  deserializeJson(doc, params.c_str());
+  JsonObject obj = doc.as<JsonObject>();
+  LOGD("Updating params\n");
+  if (obj.containsKey("time"))
+  {
+    config.mImageName = obj["time"].as<String>();
+    LOGD("Set mImageName %d\n", config.mImageName);
+  }
+
+  if (obj.containsKey("saveIntermidiate"))
+  {
+    config.mSaveIntermidiateImages = obj["saveIntermidiate"].as<bool>();
+    LOGD("Set mSaveIntermidiateImages %d\n", config.mSaveIntermidiateImages);
+  }
+
+  if (obj.containsKey("monitorUploadCount"))
+  {
+    config.mMonitor_numberOfFramesSavedBeforeUpload = obj["monitorUploadCount"].as<int>();
+    LOGD("Set monitorUploadCount %d\n", config.mMonitor_numberOfFramesSavedBeforeUpload);
+  }
+
+  if (obj.containsKey("monitorSleepTime"))
+  {
+    config.mMonitoringSleepTimeUs = obj["monitorSleepTime"].as<int>();
+    LOGD("Set monitorSleepTime %d\n", config.mMonitoringSleepTimeUs);
+  }
+
+  if (obj.containsKey("detectionUploadCount"))
+  {
+    config.mDetection_numberOfFramesSavedBeforeUpload = obj["detectionUploadCount"].as<int>();
+    LOGD("Set detectionUploadCount %d\n", config.mDetection_numberOfFramesSavedBeforeUpload);
+  }
+
+  if (obj.containsKey("detectionSleepTime"))
+  {
+    config.mDetectionSleepTimeUs = obj["detectionSleepTime"].as<int>();
+    LOGD("Set detectionSleepTime %d\n", config.mDetectionSleepTimeUs);
+  }
+
+  if (obj.containsKey("threshold"))
+  {
+    motionConfig.mThreshold = obj["threshold"].as<int>();
+    LOGD("Set threshold %d\n", motionConfig.mThreshold);
+  }
+
+  if (obj.containsKey("movementPixelCount"))
+  {
+    motionConfig.mMovementPixelCount = obj["movementPixelCount"].as<int>();
+    LOGD("Set movementPixelCount %d\n", motionConfig.mMovementPixelCount);
+  }
+
+  if (obj.containsKey("ignorePixelCount"))
+  {
+    motionConfig.mIgnorePixelCount = obj["ignorePixelCount"].as<int>();
+    LOGD("Set ignorePixelCount %d\n", motionConfig.mIgnorePixelCount);
+  }
+
+  if (obj.containsKey("halfDilationKernelSize"))
+  {
+    motionConfig.mHalfDilationKernelSize = obj["halfDilationKernelSize"].as<int>();
+    LOGD("Set halfDilationKernelSize %d\n", motionConfig.mHalfDilationKernelSize);
+  }
+
+  if (obj.containsKey("halfErrodeKernelSize"))
+  {
+    motionConfig.mHalfErrodeKernelSize = obj["halfErrodeKernelSize"].as<int>();
+    LOGD("Set halfErrodeKernelSize %d\n", motionConfig.mHalfErrodeKernelSize);
+  }
+
+  LOGD("params response .... %s\n", params.c_str());
 }
 
 void saveJpgImage(camera_fb_t *frame, bool detectedImage)
@@ -316,8 +402,7 @@ void loop()
       SaveIntermidiateImages();
     }
     saveJpgImage(frame, detectedMotion);
-    const auto numFramesBeforeUpload = detectedMotion ? 
-              config.mDetection_numberOfFramesSavedBeforeUpload : config.mMonitor_numberOfFramesSavedBeforeUpload;
+    const auto numFramesBeforeUpload = detectedMotion ? config.mDetection_numberOfFramesSavedBeforeUpload : config.mMonitor_numberOfFramesSavedBeforeUpload;
     if (imageNum >= numFramesBeforeUpload)
     {
       if (detectedMotion)

@@ -2,22 +2,10 @@
 #define WIFI_COMMS_H
 
 #include <Arduino.h>
-#include <ArduinoJson.h>
 #include <WiFi.h>
 #include "FS.h"
 
 #include "Logging.h"
-#include "MotionDetector.h"
-
-struct Config
-{
-  uint64_t mDetectionSleepTimeUs{1000000};
-  uint64_t mMonitoringSleepTimeUs{2000000};
-  int mMonitor_numberOfFramesSavedBeforeUpload{5};
-  int mDetection_numberOfFramesSavedBeforeUpload{10};
-  bool mSaveIntermidiateImages{true};
-  String mImageName{"time"};
-};
 
 class WifiComms
 {
@@ -55,7 +43,7 @@ public:
         return true;
     }
 
-    void GetParams(Config &config, MotionDetector::Config &motionConfig)
+    String GetParams()
     {   
         String getAll;
         String getBody;
@@ -103,83 +91,15 @@ public:
                 }
             }
             client.stop();
-            DynamicJsonDocument doc(1024);
-            deserializeJson(doc, getBody.c_str());
-            JsonObject obj = doc.as<JsonObject>();
-            LOGD("Updating params\n");
-            if (obj.containsKey("time"))
-            {
-                config.mImageName = obj["time"].as<String>();
-                LOGD("Set mImageName %d\n", config.mImageName);
-            }
-
-            if (obj.containsKey("saveIntermidiate"))
-            {
-                config.mSaveIntermidiateImages = obj["saveIntermidiate"].as<bool>();
-                LOGD("Set mSaveIntermidiateImages %d\n", config.mSaveIntermidiateImages);
-            }
-
-            if (obj.containsKey("monitorUploadCount"))
-            {
-                config.mMonitor_numberOfFramesSavedBeforeUpload = obj["monitorUploadCount"].as<int>();
-                LOGD("Set monitorUploadCount %d\n", config.mMonitor_numberOfFramesSavedBeforeUpload);
-            }
-
-            if (obj.containsKey("monitorSleepTime"))
-            {
-                config.mMonitoringSleepTimeUs = obj["monitorSleepTime"].as<int>();
-                LOGD("Set monitorSleepTime %d\n", config.mMonitoringSleepTimeUs);
-            }
-
-            if (obj.containsKey("detectionUploadCount"))
-            {
-                config.mDetection_numberOfFramesSavedBeforeUpload = obj["detectionUploadCount"].as<int>();
-                LOGD("Set detectionUploadCount %d\n", config.mDetection_numberOfFramesSavedBeforeUpload);
-            }
-
-            if (obj.containsKey("detectionSleepTime"))
-            {
-                config.mDetectionSleepTimeUs = obj["detectionSleepTime"].as<int>();
-                LOGD("Set detectionSleepTime %d\n", config.mDetectionSleepTimeUs);
-            }
-
-            if (obj.containsKey("threshold"))
-            {
-                motionConfig.mThreshold = obj["threshold"].as<int>();
-                LOGD("Set threshold %d\n", motionConfig.mThreshold);
-            }
-
-            if (obj.containsKey("movementPixelCount"))
-            {
-                motionConfig.mMovementPixelCount = obj["movementPixelCount"].as<int>();
-                LOGD("Set movementPixelCount %d\n", motionConfig.mMovementPixelCount);
-            }
-
-            if (obj.containsKey("ignorePixelCount"))
-            {
-                motionConfig.mIgnorePixelCount = obj["ignorePixelCount"].as<int>();
-                LOGD("Set ignorePixelCount %d\n", motionConfig.mIgnorePixelCount);
-            }
-
-            if (obj.containsKey("halfDilationKernelSize"))
-            {
-                motionConfig.mHalfDilationKernelSize = obj["halfDilationKernelSize"].as<int>();
-                LOGD("Set halfDilationKernelSize %d\n", motionConfig.mHalfDilationKernelSize);
-            }
-
-            if (obj.containsKey("halfErrodeKernelSize"))
-            {
-                motionConfig.mHalfErrodeKernelSize = obj["halfErrodeKernelSize"].as<int>();
-                LOGD("Set halfErrodeKernelSize %d\n", motionConfig.mHalfErrodeKernelSize);
-            }
-
-            LOGD("params response .... %s\n", getBody.c_str());
         }
         else
         {
             getBody = "Connection to " + serverName + " failed.";
             LOGE("%s\n", getBody.c_str());
+            getBody = "{}";
         }
+
+        return getBody;
     }
 
     bool sendImage(File &imageFile)
