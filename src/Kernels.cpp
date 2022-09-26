@@ -24,7 +24,10 @@ bool Gaussian::Process(uint8_t pixel)
     return ++mGausIdx == 9;
 }
 
-uint8_t Gaussian::Result() { return mResult / 16; }
+uint8_t Gaussian::Result()
+{
+    return mResult / 16;
+}
 
 void Gaussian::Reset()
 {

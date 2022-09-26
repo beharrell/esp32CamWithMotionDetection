@@ -18,13 +18,17 @@ private:
   uint8_t *mErrodedImage;   // ptr into rgb
   uint8_t *mRgbFrame;
   uint8_t *mIgnoreMask;
-  bool mHaveBacking{false};
+  bool mHaveLastImage{false};
   Convolve mConvolve;
 
   void BlurCurrentImage();
+  void ConvertJpegToGrayScale(camera_fb_t *frame);
+  void DiffCurrentWithLastAndThreshold();
+  bool FindMovementPixels();
   void UpdateIgnoreMask();
   void ErrodeThreshold();
   int Count1sInByte(uint8_t b);
+  void CopyCurrentImageToLast();
 
 public:
   struct Config

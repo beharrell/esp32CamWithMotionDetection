@@ -61,13 +61,50 @@ int MotionDetector::Count1sInByte(uint8_t b)
 
 void MotionDetector::Reset()
 {
-    mHaveBacking = false;
+    mHaveLastImage = false;
     memset(mLastImage, 0, mTotalPixels);
 }
 
-bool MotionDetector::FoundMovement(camera_fb_t *frame)
+void MotionDetector::DiffCurrentWithLastAndThreshold()
 {
-    assert(frame->format == PIXFORMAT_JPEG);
+    auto currentPixel = mCurrentImage;
+    auto currentPixelEnd = mCurrentImage + mTotalPixels;
+    auto diffPixel = mDiffImage;
+    auto lastPixel = mLastImage;
+    auto thresholdPixel = mThresholdImage;
+    while (currentPixel < currentPixelEnd)
+    {
+        *diffPixel = abs(static_cast<int>(*(lastPixel++)) - static_cast<int>(*(currentPixel++)));
+        *(thresholdPixel++) = (*(diffPixel++) > mConfig.mThreshold) ? 255 : 0;
+    }
+}
+
+bool MotionDetector::FindMovementPixels()
+{
+    int numPixelsIndicatingMovement{0};
+    auto errodedPixel = mErrodedImage;
+    auto errodedPixelEnd = mErrodedImage + mTotalPixels;
+    auto ignorePixel = mIgnoreMask;
+    bool foundMovement{false};
+
+    while (errodedPixel < errodedPixelEnd)
+    {
+        if (*(errodedPixel++) != 0 && Count1sInByte(*(ignorePixel++)) < mConfig.mIgnorePixelCount)
+        {
+            ++numPixelsIndicatingMovement;
+            foundMovement = numPixelsIndicatingMovement > mConfig.mMovementPixelCount;
+            if (foundMovement)
+            {
+                break;
+            }
+        }
+    }
+
+    return foundMovement;
+}
+
+void MotionDetector::ConvertJpegToGrayScale(camera_fb_t *frame)
+{
     fmt2rgb888(frame->buf, frame->len, frame->format, mRgbFrame);
     auto currentPixel = mCurrentImage;
     auto currentPixelEnd = mCurrentImage + mTotalPixels;
@@ -80,45 +117,29 @@ bool MotionDetector::FoundMovement(camera_fb_t *frame)
                                   (0.11f * static_cast<float>(*(rgbByte++))));
     }
     memset(mRgbFrame, 0, mTotalPixels * 3);
+}
+
+void MotionDetector::CopyCurrentImageToLast()
+{
+    memcpy(mLastImage, mCurrentImage, mTotalPixels);
+    mHaveLastImage = true;
+}
+
+bool MotionDetector::FoundMovement(camera_fb_t *frame)
+{
+    assert(frame->format == PIXFORMAT_JPEG);
+    ConvertJpegToGrayScale(frame);
     BlurCurrentImage();
 
-    if (mHaveBacking)
-    {
-        auto currentPixel = mCurrentImage;
-        auto currentPixelEnd = mCurrentImage + mTotalPixels;
-        auto diffPixel = mDiffImage;
-        auto lastPixel = mLastImage;
-        auto thresholdPixel = mThresholdImage;
-        while (currentPixel < currentPixelEnd)
-        {
-            *diffPixel = abs(static_cast<int>(*(lastPixel++)) - static_cast<int>(*(currentPixel++)));
-            *(thresholdPixel++) = (*(diffPixel++) > mConfig.mThreshold) ? 255 : 0;
-        }
-    }
-
     bool foundMovement{false};
-    if (mHaveBacking)
+    if (mHaveLastImage)
     {
+        DiffCurrentWithLastAndThreshold();
         ErrodeThreshold();
-        int numPixelsIndicatingMovement{0};
-        auto errodedPixel = mErrodedImage;
-        auto errodedPixelEnd = mErrodedImage + mTotalPixels;
-        auto ignorePixel = mIgnoreMask;
-        while (errodedPixel < errodedPixelEnd)
-        {
-            if (*(errodedPixel++) != 0 && Count1sInByte(*(ignorePixel++)) < mConfig.mIgnorePixelCount)
-            {
-                ++numPixelsIndicatingMovement;
-                foundMovement = numPixelsIndicatingMovement > mConfig.mMovementPixelCount;
-                if (foundMovement)
-                {
-                    break;
-                }
-            }
-        }
+        foundMovement = FindMovementPixels();
         UpdateIgnoreMask();
     }
-    memcpy(mLastImage, mCurrentImage, mTotalPixels);
-    mHaveBacking = true;
+    CopyCurrentImageToLast();
+
     return foundMovement;
 }

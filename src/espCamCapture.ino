@@ -396,7 +396,7 @@ void loop()
   if (frame != NULL)
   {
     auto wasDetected = detectedMotion;
-    detectedMotion = detectedMotion || motionDetector->foundMovement(frame);
+    detectedMotion = detectedMotion || motionDetector->FoundMovement(frame);
     if (config.mSaveIntermidiateImages && !wasDetected)
     {
       SaveIntermidiateImages();
