@@ -47,16 +47,15 @@ void MotionDetector::ErrodeThreshold()
     mConvolve.Process(&kernel, mThresholdImage, mErrodedImage);
 }
 
-int MotionDetector::Count1sInByte(uint8_t b)
+int MotionDetector::ByteHasAtLeastN1s(uint8_t b, uint8_t numberOf1s)
 {
-    int count{0};
-    while (b)
+    while (b && numberOf1s)
     {
-        count += (b & 0x01);
+        numberOf1s -= (b & 0x01);
         b = b >> 1;
     }
 
-    return count;
+    return numberOf1s == 0;
 }
 
 void MotionDetector::Reset()
@@ -67,29 +66,21 @@ void MotionDetector::Reset()
 
 void MotionDetector::DiffCurrentWithLastAndThreshold()
 {
-    auto currentPixel = mCurrentImage;
-    auto currentPixelEnd = mCurrentImage + mTotalPixels;
-    auto diffPixel = mDiffImage;
-    auto lastPixel = mLastImage;
-    auto thresholdPixel = mThresholdImage;
-    while (currentPixel < currentPixelEnd)
+    for (int i = 0; i < mTotalPixels; ++i)
     {
-        *diffPixel = abs(static_cast<int>(*(lastPixel++)) - static_cast<int>(*(currentPixel++)));
-        *(thresholdPixel++) = (*(diffPixel++) > mConfig.mThreshold) ? 255 : 0;
+        mDiffImage[i] = abs(static_cast<int>(mLastImage[i]) - static_cast<int>(mCurrentImage[i]));
+        mThresholdImage[i] = (mDiffImage[i] > mConfig.mThreshold) ? 255 : 0;
     }
 }
 
 bool MotionDetector::FindMovementPixels()
 {
     int numPixelsIndicatingMovement{0};
-    auto errodedPixel = mErrodedImage;
-    auto errodedPixelEnd = mErrodedImage + mTotalPixels;
-    auto ignorePixel = mIgnoreMask;
     bool foundMovement{false};
 
-    while (errodedPixel < errodedPixelEnd)
+    for (int i = 0; i < mTotalPixels; ++i)
     {
-        if (*(errodedPixel++) != 0 && Count1sInByte(*(ignorePixel++)) < mConfig.mIgnorePixelCount)
+        if (mErrodedImage[i] != 0 && ByteHasAtLeastN1s(mIgnoreMask[i], mConfig.mIgnorePixelCount))
         {
             ++numPixelsIndicatingMovement;
             foundMovement = numPixelsIndicatingMovement > mConfig.mMovementPixelCount;

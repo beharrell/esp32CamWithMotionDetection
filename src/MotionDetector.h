@@ -27,7 +27,7 @@ private:
   bool FindMovementPixels();
   void UpdateIgnoreMask();
   void ErrodeThreshold();
-  int Count1sInByte(uint8_t b);
+  int ByteHasAtLeastN1s(uint8_t b, uint8_t numberOf1s);
   void CopyCurrentImageToLast();
 
 public:
