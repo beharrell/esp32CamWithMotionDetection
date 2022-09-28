@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <EEPROM.h>
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
 #include "esp_camera.h"
@@ -54,6 +55,7 @@ static constexpr int mTotalPixels = FRAMESIZE_WIDTH * FRAMESIZE_HEIGHT;
 bool detectedMotion{false};
 MotionDetector *motionDetector;
 WifiComms comms;
+static constexpr char *wifiConfigName = "/wificonfig.txt";
 
 void setupCamera()
 {
@@ -165,26 +167,55 @@ void stopSerial()
 #endif
 }
 
-void setup()
+void configureComms()
 {
-#ifdef DEBUG
-  config.mMonitoringSleepTimeUs = 2000000;
-  config.mMonitor_numberOfFramesSavedBeforeUpload = 5;
-  config.mDetection_numberOfFramesSavedBeforeUpload = 10;
-#endif
-  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+  fs::FS &fs = SD_MMC;
+  EEPROM.begin(70);
+  if (fs.exists(wifiConfigName))
+  {
+    File config = fs.open(wifiConfigName);
+    auto ssid = config.readStringUntil('\n');
+    ssid.trim();
+    auto password = config.readStringUntil('\n');
+    password.trim();
+    auto server = config.readStringUntil('\n');
+    server.trim();
+    LOGD("Config %s %s %s - storing to EPROM\n", ssid.c_str(), password.c_str(), server.c_str());
+    config.close();
+    fs.remove(wifiConfigName);
+    EEPROM.writeString(0, ssid); // working but needs protecting against long strings!
+    EEPROM.writeString(20, password);
+    EEPROM.writeString(40, server);
+    EEPROM.commit();
+  }
+  const auto ssid = EEPROM.readString(0);
+  const auto password = EEPROM.readString(20);
+  const auto server = EEPROM.readString(40);
+  LOGD("Config from EEPROM %s %s %s\n", ssid.c_str(), password.c_str(), server.c_str());
+  EEPROM.end();
+  comms.Configure(ssid, password, server);
+}
 
-  setupSerial();
-  comms.setupWifi();
-  setupCamera();
-  setupSdCard();
-  motionDetector = new MotionDetector(FRAMESIZE_WIDTH, FRAMESIZE_HEIGHT);
+void CreateUniqueName()
+{
   uint8_t macAddress[6];
   esp_efuse_mac_get_default(macAddress);
   char macAsString[(sizeof(macAddress) * 2) + 1];
   sprintf(macAsString, "%x%x%x%x%x%x", macAddress[0], macAddress[1], macAddress[2],
           macAddress[3], macAddress[4], macAddress[5]);
   uniqueId = macAsString;
+}
+
+void setup()
+{
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+
+  setupSerial();
+  setupCamera();
+  setupSdCard();
+  configureComms();
+  motionDetector = new MotionDetector(FRAMESIZE_WIDTH, FRAMESIZE_HEIGHT); 
+  CreateUniqueName();
 }
 
 camera_fb_t *CaptureFrame()

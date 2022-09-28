@@ -10,14 +10,21 @@
 class WifiComms
 {
     WiFiClient client;
-    const char *ssid = "Kiwilink2.4GHz";
-    const char *password = "kiwi01wifi";
-
-    String serverName = "192.168.1.118";
+    String mSsid;
+    String mPassword;
+    String mServerName;
+    
     String serverPath = "/profile-upload-single";
     const int serverPort = 3000;
 
 public:
+    void Configure(const String & ssid, const String & password, const String & server)
+    {
+        mSsid = ssid;
+        mPassword = password;
+        mServerName = server;
+    }
+
     bool setupWifi()
     {
         if (!WiFi.mode(WIFI_STA))
@@ -25,8 +32,8 @@ public:
             LOGE("Setting wifi mode failed\n");
             return false;
         }
-        LOGD("Connecting to %s\n", ssid);
-        WiFi.begin(ssid, password);
+        LOGD("Connecting to %s\n", mSsid.c_str());
+        WiFi.begin(mSsid.c_str(), mPassword.c_str());
         int retryCount{0};
         while (WiFi.status() != WL_CONNECTED)
         {
@@ -48,12 +55,12 @@ public:
         String getAll;
         String getBody;
         LOGD("Getting params\n");
-        bool connectedOk = client.connect(serverName.c_str(), serverPort);
+        bool connectedOk = client.connect(mServerName.c_str(), serverPort);
         if (connectedOk)
         {
             LOGD("Connection successful!\n");
             client.println("GET /params HTTP/1.1");
-            client.println("Host: " + serverName);
+            client.println("Host: " + mServerName);
             client.println("Connection: close");
             client.println("");
 
@@ -94,7 +101,7 @@ public:
         }
         else
         {
-            getBody = "Connection to " + serverName + " failed.";
+            getBody = "Connection to " + mServerName + " failed.";
             LOGE("%s\n", getBody.c_str());
             getBody = "{}";
         }
@@ -107,8 +114,8 @@ public:
         String getAll;
         String getBody;
 
-        LOGD("Connecting to server: %s", serverName.c_str());
-        bool connectedOk = client.connect(serverName.c_str(), serverPort);
+        LOGD("Connecting to server: %s", mServerName.c_str());
+        bool connectedOk = client.connect(mServerName.c_str(), serverPort);
         if (connectedOk)
         {
             LOGD("Connection successful!");
@@ -123,7 +130,7 @@ public:
             uint32_t totalLen = imageLen + extraLen;
 
             client.println("POST " + serverPath + " HTTP/1.1");
-            client.println("Host: " + serverName);
+            client.println("Host: " + mServerName);
             client.println("Content-Length: " + String(totalLen));
             client.println("Content-Type: multipart/form-data; boundary=RandomNerdTutorials");
             client.println();
@@ -180,7 +187,7 @@ public:
         }
         else
         {
-            getBody = "Connection to " + serverName + " failed.";
+            getBody = "Connection to " + mServerName + " failed.";
             LOGE("%s\n", getBody.c_str());
         }
         return connectedOk;
