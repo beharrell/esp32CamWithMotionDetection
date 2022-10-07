@@ -15,7 +15,7 @@ class WifiComms
     String mServerName;
     
     String serverPath = "/profile-upload-single";
-    const int serverPort = 3000;
+    const int serverPort = 8080;
 
 public:
     void Configure(const String & ssid, const String & password, const String & server)
